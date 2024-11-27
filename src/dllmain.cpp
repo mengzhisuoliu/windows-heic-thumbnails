@@ -233,6 +233,7 @@ STDAPI DllRegisterServer()
             {HKEY_CURRENT_USER,   L"Software\\Classes\\CLSID\\" SZ_CLSID_HEICTHUMBHANDLER L"\\InProcServer32",             NULL,                           szModuleName},
             {HKEY_CURRENT_USER,   L"Software\\Classes\\CLSID\\" SZ_CLSID_HEICTHUMBHANDLER L"\\InProcServer32",             L"ThreadingModel",              L"Apartment"},
             {HKEY_CURRENT_USER,   L"Software\\Classes\\.heic\\ShellEx\\{e357fccd-a995-4576-b01f-234630154e96}",            NULL,                           SZ_CLSID_HEICTHUMBHANDLER},
+            {HKEY_CURRENT_USER,   L"Software\\Classes\\.heif\\ShellEx\\{e357fccd-a995-4576-b01f-234630154e96}",            NULL,                           SZ_CLSID_HEICTHUMBHANDLER},
         };
 
         hr = S_OK;
@@ -261,6 +262,7 @@ STDAPI DllUnregisterServer()
     {
         L"Software\\Classes\\CLSID\\" SZ_CLSID_HEICTHUMBHANDLER,
         L"Software\\Classes\\.heic\\ShellEx\\{e357fccd-a995-4576-b01f-234630154e96}"
+        L"Software\\Classes\\.heif\\ShellEx\\{e357fccd-a995-4576-b01f-234630154e96}"
     };
 
     // Delete the registry entries
