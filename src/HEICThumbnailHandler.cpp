@@ -92,47 +92,6 @@ IFACEMETHODIMP CHEICThumbProvider::Initialize(IStream* pStream, DWORD)
     return hr;
 }
 
-//HRESULT CreateTestBitmap(UINT cx, HBITMAP* phbmp, WTS_ALPHATYPE* pdwAlpha)
-//{
-//    HRESULT hr = E_FAIL;
-//
-//    UINT nWidth = cx;
-//    UINT nHeight = cx;
-//
-//    BITMAPINFO bmi = {};
-//    bmi.bmiHeader.biSize = sizeof(bmi.bmiHeader);
-//    bmi.bmiHeader.biWidth = nWidth;
-//    bmi.bmiHeader.biHeight = -static_cast<LONG>(nHeight);
-//    bmi.bmiHeader.biPlanes = 1;
-//    bmi.bmiHeader.biBitCount = 32;
-//    bmi.bmiHeader.biCompression = BI_RGB;
-//
-//    UINT stride = ((((bmi.bmiHeader.biWidth * bmi.bmiHeader.biBitCount) + 31) & ~31) >> 3);
-//
-//    BYTE* pBits = 0;
-//    HBITMAP hbmp = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, reinterpret_cast<void**>(&pBits), NULL, 0);
-//    hr = hbmp ? S_OK : E_OUTOFMEMORY;
-//    if (SUCCEEDED(hr))
-//    {
-//        for (UINT y = 0; y < nHeight; ++y)
-//        {
-//            DWORD* row = reinterpret_cast<DWORD*>(&pBits[y * stride]);
-//            for (UINT x = 0; x < nWidth; ++x)
-//            {
-//                // 0xAARRGGBB
-//
-//                row[x] = 0xFF000000 | 
-//                    ((y % 256) << 16) |
-//                    (x % 256);
-//            }
-//        }
-//        *phbmp = hbmp;
-//        *pdwAlpha = WTSAT_ARGB;
-//    }
-//
-//    return hr;
-//}
-
 HRESULT CreateDIBFromData(HBITMAP* phbmp, WTS_ALPHATYPE* pdwAlpha, const uint8_t* src_data, int thumbnail_width, int thumbnail_height, int src_stride)
 {
     HRESULT hr = E_FAIL;
@@ -186,27 +145,47 @@ HRESULT CreateDIBFromData(HBITMAP* phbmp, WTS_ALPHATYPE* pdwAlpha, const uint8_t
 // IThumbnailProvider
 IFACEMETHODIMP CHEICThumbProvider::GetThumbnail(UINT requested_size, HBITMAP* phbmp, WTS_ALPHATYPE* pdwAlpha)
 {
-    Log_WriteFmt(LOG_TRACE, L"CHEICThumbProvider::GetThumbnail(%u)", requested_size);
+    Log_WriteFmt(LOG_INFO, L"BEGIN Requested thumbnail size: %u x %u", requested_size, requested_size);
 
     ULARGE_INTEGER ulSize;
 
     HRESULT final_hr = E_FAIL;
 
+    DWORD tick_start = GetTickCount();
+
     HRESULT hr = IStream_Size(_pStream, &ulSize);
-    if (SUCCEEDED(hr))
+    if (FAILED(hr))
     {
-        Log_WriteFmt(LOG_DEBUG, L"stream size {%u, %u}", ulSize.HighPart, ulSize.LowPart);
+        Log_WriteFmt(LOG_ERROR, L"Failed to get image stream size, IStream_Size failed: 0x%08x", hr);
+    }
+    else
+    {
+        Log_WriteFmt(LOG_DEBUG, L"Stream size {%u, %u}", ulSize.HighPart, ulSize.LowPart);
 
         if (ulSize.HighPart == 0)
         {
             void* ptr = LocalAlloc(LPTR, ulSize.LowPart);
-            if (ptr)
+            if (!ptr)
+            {
+                Log_WriteFmt(LOG_ERROR, L"Could not allocate memory for image, LocalAlloc(%u) failed: 0x%08x", ulSize.LowPart, GetLastError());
+            }
+            else
             {
                 ULONG ulRead = 0;
                 hr = _pStream->Read(ptr, ulSize.LowPart, &ulRead);
-                if (SUCCEEDED(hr))
+                if (FAILED(hr))
                 {
-                    Log_WriteFmt(LOG_DEBUG, L"stream read: %u", ulRead);
+                    Log_WriteFmt(LOG_ERROR, L"Could not read image stream, IStream::Read(%u) failed: 0x%08x", ulSize.LowPart, hr);
+                }
+                else
+                {
+                    DWORD tick_read_end = GetTickCount();
+                    Log_WriteFmt(LOG_TRACE, L"Stream read time: %u ms", tick_read_end - tick_start);
+
+                    int input_width = 0;
+                    int input_height = 0;
+
+                    Log_WriteFmt(LOG_DEBUG, L"Stream read: %u", ulRead);
 
                     heif_context* ctx = heif_context_alloc();
                     heif_context_read_from_memory_without_copy(ctx, ptr, ulSize.LowPart, nullptr);
@@ -216,28 +195,42 @@ IFACEMETHODIMP CHEICThumbProvider::GetThumbnail(UINT requested_size, HBITMAP* ph
                     heif_error err = heif_context_get_primary_image_handle(ctx, &image_handle);
                     if (err.code) 
                     {
-                        Log_WriteFmt(LOG_WARNING, L"Could not read HEIF image: %S", err.message);
+                        Log_WriteFmt(LOG_ERROR, L"Could not read HEIF image, heif_context_get_primary_image_handle failed: %S", err.message);
                     }
                     else
                     {
+                        input_width = heif_image_handle_get_width(image_handle);
+                        input_height = heif_image_handle_get_height(image_handle);
+
+                        Log_WriteFmt(LOG_INFO, L"Full HEIF image size: %i x %i", input_width, input_height);
+
                         heif_item_id thumbnail_ID;
                         int nThumbnails = heif_image_handle_get_list_of_thumbnail_IDs(image_handle, &thumbnail_ID, 1);
-                        if (nThumbnails > 0) 
+                        if (nThumbnails > 0)
                         {
-                            Log_WriteFmt(LOG_DEBUG, L"Image has thumbnails: %i", nThumbnails);
+                            Log_WriteFmt(LOG_INFO, L"File contains %i thumbnail, loading thumbnail.", nThumbnails);
 
                             struct heif_image_handle* thumbnail_handle;
                             err = heif_image_handle_get_thumbnail(image_handle, thumbnail_ID, &thumbnail_handle);
                             if (err.code) 
                             {
-                                Log_WriteFmt(LOG_WARNING, L"Could not read HEIF thumbnail: %S", err.message);
+                                Log_WriteFmt(LOG_ERROR, L"Could not load HEIF thumbnail, heif_image_handle_get_thumbnail failed: %S", err.message);
                             }
                             else
                             {
                                 // replace image handle with thumbnail handle
                                 heif_image_handle_release(image_handle);
                                 image_handle = thumbnail_handle;
+
+                                input_width = heif_image_handle_get_width(image_handle);
+                                input_height = heif_image_handle_get_height(image_handle);
+
+                                Log_WriteFmt(LOG_INFO, L"HEIF thumbnail size: %i x %i", input_width, input_height);
                             }
+                        }
+                        else
+                        {
+                            Log_Write(LOG_INFO, L"File does not contain thumbnail, decoding full image.");
                         }
                     }
 
@@ -248,21 +241,22 @@ IFACEMETHODIMP CHEICThumbProvider::GetThumbnail(UINT requested_size, HBITMAP* ph
 
                         int bit_depth = 8;
 
+                        DWORD tick_decode_start = GetTickCount();
+                        Log_WriteFmt(LOG_TRACE, L"Decode setup time: %u ms", tick_decode_start - tick_read_end);
+
                         struct heif_image* image = NULL;
                         err = heif_decode_image(image_handle, &image, heif_colorspace_RGB, heif_chroma_interleaved_RGBA, decode_options);
                         if (err.code) 
                         {
-                            Log_WriteFmt(LOG_WARNING, L"Could not decode HEIF image: %S", err.message);
+                            Log_WriteFmt(LOG_ERROR, L"Could not decode HEIF image, heif_decode_image failed: %S", err.message);
                         }
                         else
                         {
-                            int input_width = heif_image_handle_get_width(image_handle);
-                            int input_height = heif_image_handle_get_height(image_handle);
+                            DWORD tick_decode_end = GetTickCount();
+                            Log_WriteFmt(LOG_INFO, L"HEIF decode time: %u ms", tick_decode_end - tick_decode_start);
 
-                            Log_WriteFmt(LOG_DEBUG, L"HEIF image/thumb size: %i x %i", input_width, input_height);
-
-                            int thumbnail_width = input_width;
-                            int thumbnail_height = input_height;
+                            int output_width = input_width;
+                            int output_height = input_height;
 
                             bool scale_error = false;
                             if (input_width > (int)requested_size || input_height > (int)requested_size)
@@ -281,13 +275,13 @@ IFACEMETHODIMP CHEICThumbProvider::GetThumbnail(UINT requested_size, HBITMAP* ph
                                     scaled_h = requested_size;
                                 }
 
-                                Log_WriteFmt(LOG_INFO, L"scaling image (%i, %i) to (%i, %i)", input_width, input_height, scaled_w, scaled_h);
+                                Log_WriteFmt(LOG_INFO, L"Scaling image %i x %i to %i x %i", input_width, input_height, scaled_w, scaled_h);
 
                                 struct heif_image* scaled_image = NULL;
                                 err = heif_image_scale_image(image, &scaled_image, scaled_w, scaled_h, NULL);
                                 if (err.code) 
                                 {
-                                    Log_WriteFmt(LOG_WARNING, L"Could not scale HEIF image: %S", err.message);
+                                    Log_WriteFmt(LOG_ERROR, L"Could not scale image, heif_image_scale_image failed: %S", err.message);
                                     scale_error = true;
                                 }
                                 else
@@ -295,8 +289,11 @@ IFACEMETHODIMP CHEICThumbProvider::GetThumbnail(UINT requested_size, HBITMAP* ph
                                     heif_image_release(image);
                                     image = scaled_image;
 
-                                    thumbnail_width = scaled_w;
-                                    thumbnail_height = scaled_h;
+                                    output_width = scaled_w;
+                                    output_height = scaled_h;
+
+                                    DWORD tick_scale_end = GetTickCount();
+                                    Log_WriteFmt(LOG_TRACE, L"Image scale time: %u ms", tick_scale_end - tick_decode_end);
                                 }
                             }
 
@@ -304,8 +301,19 @@ IFACEMETHODIMP CHEICThumbProvider::GetThumbnail(UINT requested_size, HBITMAP* ph
                             {
                                 int stride;
                                 const uint8_t* data = heif_image_get_plane_readonly(image, heif_channel_interleaved, &stride);
+                                if (data == NULL)
+                                {
+                                    Log_Write(LOG_ERROR, L"Could not get image data, heif_image_get_plane_readonly returned null");
+                                    scale_error = true;
+                                }
+                                else
+                                {
+                                    DWORD tick_dib_start = GetTickCount();
+                                    final_hr = CreateDIBFromData(phbmp, pdwAlpha, data, output_width, output_height, stride);
 
-                                final_hr = CreateDIBFromData(phbmp, pdwAlpha, data, thumbnail_width, thumbnail_height, stride);
+                                    DWORD tick_dib_end = GetTickCount();
+                                    Log_WriteFmt(LOG_TRACE, L"Create DIB from HEIF time: %u ms", tick_dib_end - tick_dib_start);
+                                }
                             }
 
                             heif_image_release(image);
@@ -320,12 +328,19 @@ IFACEMETHODIMP CHEICThumbProvider::GetThumbnail(UINT requested_size, HBITMAP* ph
                 LocalFree(ptr);
             }
         }
+        else
+        {
+            Log_WriteFmt(LOG_WARNING, L"Skipping unexpectedly large image {%u, %u}", ulSize.HighPart, ulSize.LowPart);
+        }
     }
 
-    //hr = CreateTestBitmap(cx, phbmp, pdwAlpha);
+    DWORD tick_end = GetTickCount();
+    Log_WriteFmt(LOG_INFO, L"END Total time: %u ms", tick_end - tick_start);
 
     if (FAILED(hr))
+    {
         return hr;
+    }
 
     return final_hr;
 }
