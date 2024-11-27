@@ -1,0 +1,28 @@
+
+# Installing
+
+- Requires Windows 10 (64-bit)
+- Install the latest [Microsoft Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe), if required. You may already have this installed, but if you get an error when you run the `regsvr32` command, install this and then try again.
+
+1. Create a folder, such as `C:\HEICThumbnailHandler\` to place the DLL files.
+2. Extract the files `HEICThumbnailHandler.dll`, `heif.dll`, and `libde265.dll` into the folder you created (`C:\HEICThumbnailHandler\`).
+3. Register the DLL:
+	- Press `Win+R`
+	- Type `cmd`
+	- Click `OK`
+	- Type `cd C:\HEICThumbnailHandler\`
+	- Type `regsvr32 HEICThumbnailHandler.dll`
+
+Windows Explorer should begin displaying thumbnails for `.heic` and `.heif` files.
+
+# Uninstalling
+
+1. Un-Register the DLL:
+	- Press `Win+R`
+	- Type `cmd`
+	- Click `OK`
+	- Type `cd C:\HEICThumbnailHandler\`
+	- Type `regsvr32 /u HEICThumbnailHandler.dll`
+2. Delete the `HEICThumbnailHandler` folder.
+
+Existing thumbnails may continue to display, but new thumbnails will not be created.
